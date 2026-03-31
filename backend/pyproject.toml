@@ -1,0 +1,30 @@
+[project]
+name = "gmail-agent-backend"
+version = "0.1.0"
+description = "Gmail Reply Agent - FastAPI Backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "supabase>=2.0.0",
+    "google-api-python-client>=2.130.0",
+    "google-auth-oauthlib>=1.2.0",
+    "python-jose[cryptography]>=3.3.0",
+    "cryptography>=42.0.0",
+    "pydantic-settings>=2.2.0",
+    "httpx>=0.27.0",
+    "openai>=1.30.0",
+    "sentence-transformers>=3.0.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
