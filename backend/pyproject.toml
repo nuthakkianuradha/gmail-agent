@@ -17,6 +17,7 @@ dependencies = [
     "sentence-transformers>=3.0.0",
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.9",
+    "mcp>=1.28.1",
 ]
 
 [project.optional-dependencies]

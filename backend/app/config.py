@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"
     backend_url: str = "http://localhost:8000"
 
+    # MCP tool server. Leave unset to run the Gmail MCP server in-process
+    # (default, single deployment). Set to a base URL (e.g. the same backend or
+    # a dedicated service) to reach a remotely-deployed MCP server over HTTP.
+    mcp_server_url: str | None = None
+
     # Google OAuth scopes
     google_scopes: list[str] = [
         "openid",

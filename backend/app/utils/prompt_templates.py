@@ -1,32 +1,16 @@
-DRAFT_SYSTEM_PROMPT = """You are an email reply assistant. Draft a reply to the email below.
-Follow the user's persona, rules, and learned preferences exactly.
-Write ONLY the reply body — no subject line, no headers, no meta-commentary."""
+"""Backward-compatible prompt exports.
 
-DRAFT_PROMPT = """
-USER PERSONA:
-- Name: {display_name}
-- Tone: {tone}
-- Style: {style_notes}
-- Signature: {signature}
-- Instructions: {custom_instructions}
+The reply prompts now live in the agent blocks (their canonical home):
+- system prompt  -> :mod:`app.agent.system_prompt`
+- user template  -> :mod:`app.agent.input`
 
-RULES:
-{rules_text}
-
-RELEVANT PAST EMAILS (for context and style reference):
-{past_emails_text}
-
-LEARNED PREFERENCES (from past edits):
-{modifications_text}
-
-EMAIL TO REPLY TO:
-From: {from_address}
-Subject: {subject}
-Body:
-{body_text}
-
-Draft a reply following the persona, rules, and learned preferences above.
+They are re-exported here under their original names so existing imports (and
+tests) keep working. The diff-summary prompt — used by the modification/learning
+path, not the reply agent — stays defined here.
 """
+
+from app.agent.system_prompt import REPLY_SYSTEM_PROMPT as DRAFT_SYSTEM_PROMPT
+from app.agent.input import REPLY_INPUT_TEMPLATE as DRAFT_PROMPT
 
 DIFF_SUMMARY_PROMPT = """Compare the AI-generated draft with the user's edited version.
 Summarize what the user changed in 1-2 sentences. Focus on style, tone, and content preferences.
@@ -38,6 +22,8 @@ USER'S VERSION:
 {draft_after}
 
 Summary of changes:"""
+
+__all__ = ["DRAFT_SYSTEM_PROMPT", "DRAFT_PROMPT", "DIFF_SUMMARY_PROMPT"]
 
 
 if __name__ == "__main__":
@@ -57,4 +43,4 @@ if __name__ == "__main__":
     print("Sample prompt:")
     print(prompt[:500])
     print("...")
-    print("Prompt templates OK")
+    print("Prompt templates OK (re-exported from app.agent blocks)")

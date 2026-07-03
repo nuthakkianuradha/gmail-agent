@@ -15,8 +15,21 @@ openrouter_client = AsyncOpenAI(
 )
 
 
-async def generate_draft(system_prompt: str, user_prompt: str) -> str:
-    """Generate an email draft. Tries Groq first, falls back to OpenRouter."""
+async def generate_draft(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    primary_model: str = "llama-3.3-70b-versatile",
+    fallback_model: str = "google/gemini-2.0-flash-001",
+    temperature: float = 0.7,
+    max_tokens: int = 1024,
+) -> str:
+    """Generate an email draft. Tries Groq first, falls back to OpenRouter.
+
+    Model choices and sampling are supplied by the agent's ``AgentConfig`` (see
+    :mod:`app.agent.config`); the defaults here mirror that config so the
+    function is still usable standalone.
+    """
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt},
@@ -24,19 +37,19 @@ async def generate_draft(system_prompt: str, user_prompt: str) -> str:
 
     try:
         response = await groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=primary_model,
             messages=messages,
-            temperature=0.7,
-            max_tokens=1024,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         return response.choices[0].message.content or ""
     except Exception:
         # Fallback to OpenRouter
         response = await openrouter_client.chat.completions.create(
-            model="google/gemini-2.0-flash-001",
+            model=fallback_model,
             messages=messages,
-            temperature=0.7,
-            max_tokens=1024,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
         return response.choices[0].message.content or ""
 

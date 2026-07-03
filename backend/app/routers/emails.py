@@ -1,6 +1,15 @@
+"""Emails router — reads Gmail exclusively through the MCP client.
+
+The router decrypts the user's access token and hands it to
+:class:`app.mcp.client.GmailMCPClient`; every Gmail read goes over the MCP
+protocol to the Gmail tool server. The router never calls the Gmail SDK directly.
+"""
+
 from fastapi import APIRouter, Depends, Query
+
 from app.dependencies import get_current_user
-from app.services import gmail_service, auth_service
+from app.services import auth_service
+from app.mcp.client import GmailMCPClient
 from app.models.email import InboxResponse, EmailMessage, ThreadResponse
 
 router = APIRouter()
@@ -13,8 +22,8 @@ async def inbox(
     user: dict = Depends(get_current_user),
 ):
     access_token = auth_service.get_decrypted_access_token(user)
-    result = gmail_service.list_inbox(access_token, page_token, max_results)
-    return result
+    async with GmailMCPClient(access_token) as gmail:
+        return await gmail.list_inbox(page_token, max_results)
 
 
 @router.get("/{message_id}", response_model=EmailMessage)
@@ -23,7 +32,8 @@ async def get_email(
     user: dict = Depends(get_current_user),
 ):
     access_token = auth_service.get_decrypted_access_token(user)
-    return gmail_service.get_message(access_token, message_id)
+    async with GmailMCPClient(access_token) as gmail:
+        return await gmail.get_message(message_id)
 
 
 @router.get("/thread/{thread_id}", response_model=ThreadResponse)
@@ -32,11 +42,12 @@ async def get_thread(
     user: dict = Depends(get_current_user),
 ):
     access_token = auth_service.get_decrypted_access_token(user)
-    return gmail_service.get_thread(access_token, thread_id)
+    async with GmailMCPClient(access_token) as gmail:
+        return await gmail.get_thread(thread_id)
 
 
 if __name__ == "__main__":
-    print("Email router endpoints:")
+    print("Email router endpoints (Gmail via MCP client):")
     for route in router.routes:
         print(f"  {route.methods} {route.path}")
     print("Email router module OK")

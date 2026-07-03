@@ -3,7 +3,6 @@
 AI-powered email reply assistant that learns your writing style over time.
 
 ---
-
 ## What It Does
 
 1. **Sign in** with your Google account
@@ -40,19 +39,30 @@ The agent builds a knowledge base from:
 gmail-agent/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py              # FastAPI app entry
+│   │   ├── main.py              # FastAPI app entry + MCP server mount/lifespan
 │   │   ├── config.py            # Environment config
 │   │   ├── dependencies.py      # Auth guards
-│   │   ├── routers/
+│   │   ├── agent/               # ★ The reply agent, as 5 composable blocks
+│   │   │   ├── config.py            # AgentConfig — models, sampling, retrieval knobs
+│   │   │   ├── system_prompt.py     # The agent's standing instructions
+│   │   │   ├── state.py             # AgentState — persona, rules, RAG memory
+│   │   │   ├── input.py             # Renders state + email → user prompt
+│   │   │   ├── output.py            # Parses model text → structured draft
+│   │   │   └── agent.py             # ReplyAgent orchestrator (ties the 5 blocks)
+│   │   ├── mcp/                 # ★ Gmail tools over the MCP protocol
+│   │   │   ├── server.py            # FastMCP server hosting the Gmail tools
+│   │   │   ├── connection.py        # Transport + session wiring, token propagation
+│   │   │   └── client.py            # GmailMCPClient — typed handle the agent uses
+│   │   ├── routers/             # Thin HTTP adapters
 │   │   │   ├── auth.py          # Google OAuth login/callback
-│   │   │   ├── emails.py        # Inbox, thread, message
-│   │   │   ├── drafts.py        # AI draft generation + send
+│   │   │   ├── emails.py        # Inbox/thread/message (via MCP client)
+│   │   │   ├── drafts.py        # Draft generate + send (via ReplyAgent)
 │   │   │   └── settings.py      # Persona & rules CRUD
-│   │   ├── services/
-│   │   │   ├── gmail_service.py      # Gmail API wrapper
+│   │   ├── services/           # Reusable internals (not called by routers directly)
+│   │   │   ├── gmail_service.py      # Gmail API wrapper (called by MCP tools)
 │   │   │   ├── auth_service.py       # OAuth + JWT
-│   │   │   ├── llm_service.py        # Groq + OpenRouter
-│   │   │   ├── rag_service.py        # Vector search + prompt assembly
+│   │   │   ├── llm_service.py        # Groq + OpenRouter (config-driven)
+│   │   │   ├── rag_service.py        # Vector search + persona/rules reads
 │   │   │   ├── embedding_service.py  # Sentence-transformers
 │   │   │   ├── modification_service.py
 │   │   │   └── archive_service.py
@@ -73,6 +83,62 @@ gmail-agent/
 └── supabase/
     └── migrations/              # SQL schema files
 ```
+
+---
+
+## Architecture
+
+The backend is organized around two ideas: the **agent** is decomposed into five
+small blocks, and every Gmail side-effect goes through **MCP tools**. Routers are
+thin — they translate HTTP to an agent/MCP call and nothing more.
+
+### The agent, in 5 blocks (`app/agent/`)
+
+Each LLM agent is broken into the same five independently-testable blocks:
+
+| Block | File | Responsibility |
+|-------|------|----------------|
+| **config** | `config.py` | `AgentConfig` — which models, sampling params, how much memory to retrieve. Per-run, not env. |
+| **system prompt** | `system_prompt.py` | The agent's standing instructions / role and constraints. |
+| **state** | `state.py` | `AgentState` — everything loaded from memory: persona, active rules, and RAG-retrieved similar emails + past edits. |
+| **input** | `input.py` | Renders `state` + the incoming email into the model's user prompt. |
+| **output** | `output.py` | Parses the raw model text into a clean, structured `ReplyAgentOutput`. |
+
+`agent.py` holds the `ReplyAgent` orchestrator that wires them together:
+
+```
+generate_reply(message_id):
+  config ─▶ [fetch email via MCP] ─▶ state ─▶ (system_prompt + input) ─▶ LLM ─▶ output
+```
+
+### MCP tools: client / server / connection (`app/mcp/`)
+
+The agent never touches the Gmail API directly. Gmail is exposed as **MCP tools**
+over the real MCP protocol (JSON-RPC over streamable HTTP), split into three
+concerns:
+
+| Concern | File | Responsibility |
+|---------|------|----------------|
+| **server** | `server.py` | A `FastMCP` server hosting the Gmail tools (`gmail_list_inbox`, `gmail_get_message`, `gmail_get_thread`, `gmail_send_reply`). Each tool reads the caller's OAuth token from the request header and delegates to `gmail_service`. |
+| **connection** | `connection.py` | The transport + session wiring. Default transport is **in-process** (an ASGI transport pointed at the mounted server app — no sockets, single deployment) with a **remote** URL mode for a separately-deployed server. Propagates the per-user token as the `X-Gmail-Access-Token` header. |
+| **client** | `client.py` | `GmailMCPClient` — a typed `async with` handle the agent/routers use. It wraps an MCP `ClientSession` and turns tool results back into plain dicts. |
+
+```
+ReplyAgent / routers
+      │  (GmailMCPClient, per-user token)
+      ▼
+  connection  ──MCP protocol (in-process ASGI or remote HTTP)──▶  server (FastMCP)
+                                                                     │
+                                                                     ▼
+                                                               gmail_service ─▶ Gmail API
+```
+
+**Per-user tokens:** the MCP server is stateless and multi-tenant — it carries no
+credentials. The client attaches the caller's Gmail OAuth token as a request
+header on every call; the server reads it back out per request. The server's
+streamable-HTTP session manager is started once in the FastAPI `lifespan`
+(required for the in-process client to work) and the same app is also mounted at
+`/mcp-server` for external MCP clients.
 
 ---
 
@@ -120,6 +186,10 @@ ENCRYPTION_KEY=your_fernet_key
 
 FRONTEND_URL=http://localhost:5173
 BACKEND_URL=http://localhost:8000
+
+# Optional — MCP tool server. Leave unset to run the Gmail MCP server
+# in-process (default). Set to a base URL to reach a remotely-deployed server.
+# MCP_SERVER_URL=https://your-backend.example.com
 ```
 
 > Generate `ENCRYPTION_KEY`:
@@ -180,35 +250,39 @@ Open **http://localhost:5173**
 | `GET` | `/settings/rules` | List rules |
 | `POST` | `/settings/rules` | Create rule |
 | `DELETE` | `/settings/rules/{id}` | Delete rule |
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Health check (also lists exposed MCP tools) |
+| `*` | `/mcp-server` | Mounted Gmail **MCP server** (streamable HTTP) for external MCP clients |
 
 ---
 
-## How the RAG Pipeline Works
+## How a Reply Is Generated (agent + RAG + MCP)
 
 ```
-User clicks "Generate Reply"
+User clicks "Generate Reply"  →  POST /drafts/generate  →  ReplyAgent.generate_reply()
         │
         ▼
-  Embed incoming email (all-mpnet-base-v2)
+  [MCP] GmailMCPClient.get_message()  ── over MCP ──▶  gmail_get_message tool  ──▶  Gmail API
+        │            (block: input source; per-user token in X-Gmail-Access-Token header)
+        ▼
+  STATE: embed the email (all-mpnet-base-v2) → vector search Supabase for similar
+         emails + past edits; load persona + active rules
         │
         ▼
-  Vector search Supabase (similar emails + past modifications)
+  SYSTEM PROMPT + INPUT: assemble the model turns from state + email
         │
         ▼
-  Fetch persona + active rules
+  MODEL (governed by CONFIG): Groq generates the draft (OpenRouter fallback)
         │
         ▼
-  Assemble prompt with all context
+  OUTPUT: parse/clean into a structured draft  →  returned to the editor
         │
         ▼
-  Groq LLM generates draft (OpenRouter fallback)
+  User reviews/edits in markdown editor  →  POST /drafts/send  →  ReplyAgent.send_reply()
         │
         ▼
-  User reviews/edits in markdown editor
-        │
-        ▼
-  On send: archive email, store edit diff, embed for future use
+  [MCP] gmail_send_reply tool sends in-thread; then archive the sent email and,
+        if the user edited the draft, store the before/after diff — both embedded
+        so future retrievals reflect the user's preferences (the agent learns).
 ```
 
 ---
@@ -227,12 +301,30 @@ Update `FRONTEND_URL`, `BACKEND_URL`, and `GOOGLE_REDIRECT_URI` for production d
 
 ## Verify Installation
 
+Most modules have a `__main__` self-check. Useful ones:
+
 ```bash
 cd backend
+
+# Core infra
 uv run python -m app.config              # Check env loads
 uv run python -m app.utils.crypto        # Test encrypt/decrypt
 uv run python -m app.utils.email_parser  # Test email parsing
 uv run python -m app.services.embedding_service  # Test embeddings
 uv run python -m app.services.llm_service        # Check LLM config
 uv run python -m app.db.supabase_client          # Test DB connection
+
+# MCP layer (real protocol, no external calls)
+uv run python -m app.mcp.server          # List exposed Gmail tools
+uv run python -m app.mcp.connection      # Live in-process MCP roundtrip (lists tools)
+
+# Agent blocks
+uv run python -m app.agent.config
+uv run python -m app.agent.system_prompt
+uv run python -m app.agent.input
+uv run python -m app.agent.output
+uv run python -m app.agent.agent
+
+# Full test suite (41 tests: infra + MCP roundtrip + agent blocks)
+uv run pytest -q
 ```
