@@ -50,14 +50,27 @@ agent.tools / routers ──GmailMCPClient(token)──▶ transport ──JSON-
                                                  host (main.py) keeps the server's session manager running
 ```
 
-**What you need.**
+**Keys you need and how to get them.** Everything here comes from one Google
+Cloud project ([console.cloud.google.com](https://console.cloud.google.com)).
 
-1. A Google Cloud project with an **OAuth 2.0 Client ID** (type: Web application).
-2. Authorized redirect URI: `http://localhost:8001/auth/callback`.
-3. **Gmail API enabled** in the project.
-4. On the **OAuth consent screen**: add scopes `gmail.readonly`, `gmail.send`,
-   `gmail.modify`, and add your Google account as a **Test user**.
-5. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` in `backend/.env`.
+| Env var | Where it comes from |
+|---|---|
+| `GOOGLE_CLIENT_ID` | APIs & Services → Credentials → **Create credentials → OAuth client ID** → type *Web application*. Add authorized redirect URI `http://localhost:8001/auth/callback`. Copy the Client ID. |
+| `GOOGLE_CLIENT_SECRET` | Same screen, the Client secret. |
+| `GOOGLE_REDIRECT_URI` | `http://localhost:8001/auth/callback`, exactly as registered above. |
+
+Before creating the client, do these three one-time steps in the same project,
+or sign-in will fail with the errors listed under Gotchas:
+
+1. **Enable the Gmail API**: APIs & Services → Library → search "Gmail API" → Enable.
+2. **OAuth consent screen**: User type *External*, publishing status *Testing*.
+   Under **Scopes**, add `.../auth/gmail.readonly`, `.../auth/gmail.send`,
+   `.../auth/gmail.modify` (plus `openid`, `userinfo.email`, `userinfo.profile`).
+3. **Test users**: add every Google account that will sign in. In Testing mode,
+   anyone else gets "Access blocked", and refresh tokens expire after 7 days.
+
+No key is needed for the MCP protocol itself: the server is in-process and
+stateless, and each request carries the signed-in user's OAuth token.
 
 **Verify it alone.**
 
@@ -96,14 +109,21 @@ order**:
 | 6 | **Retrieve** | `retrieve.py` | Query text → embed → `match_embeddings()` (pgvector, HNSW cosine) → best chunk per source. Plus `get_persona`, `get_active_rules`. |
 | 7 | **Learn** | `learn.py` | After a send: `archive_sent_email` (store + index the outbound mail) and `store_modification` (store the user's edit with a cheap-LLM "what changed?" summary, then index it). |
 
-**What you need.**
+**Keys you need and how to get them.** One Supabase project
+([supabase.com](https://supabase.com), free tier is enough).
 
-1. A **Supabase** project. Copy the Project URL and the **service_role** key to
-   `SUPABASE_URL` / `SUPABASE_SERVICE_KEY`.
-2. Run both migrations in the Supabase **SQL Editor**, in order:
-   `supabase/migrations/001_users.sql`, then `002_full_schema.sql` (enables
-   pgvector, creates the tables, the HNSW index, and `match_embeddings()`).
-3. Disk + one-time download: the embedding model (~420 MB) is fetched on first use.
+| Env var | Where it comes from |
+|---|---|
+| `SUPABASE_URL` | Project → Settings → **API** → *Project URL* (`https://<ref>.supabase.co`). |
+| `SUPABASE_SERVICE_KEY` | Same page → *Project API keys* → **`service_role`** (not `anon`). It bypasses row-level security, so it lives only in `backend/.env`, never in the frontend. |
+
+Then create the schema: Project → **SQL Editor** → paste and run
+`supabase/migrations/001_users.sql`, then `002_full_schema.sql`. The second one
+enables the `vector` extension, creates the six tables, the HNSW index, and the
+`match_embeddings()` function. `uv run python check_setup.py` confirms all of it.
+
+The embedding model needs no key. It is downloaded once (~420 MB) from Hugging
+Face on first use and cached locally.
 
 **Verify it alone.**
 
@@ -147,15 +167,24 @@ send_reply(...):
   tools.get_email → tools.send_reply → tools.remember_sent_email → tools.remember_edit (if edited)
 ```
 
-**What you need.** An LLM, through `app/core/llm.py`'s provider chain
-(local → Groq → OpenRouter; cloud providers only if their keys are set).
+**Keys you need and how to get them.** The agent needs one LLM. It reaches it
+through `app/core/llm.py`'s provider chain: local → Groq → OpenRouter, trying
+cloud providers only if their keys are set.
 
-- **Local (default).** Install [Ollama](https://ollama.com), then
-  `ollama pull llama3.1:8b`. In `.env`: `LLM_PROVIDER=local`,
-  `LOCAL_LLM_MODEL=llama3.1:8b`. No keys needed. Any model Ollama serves works;
-  `qwen2.5:7b-instruct` and `gpt-oss:20b` are good alternatives.
-- **Cloud.** `LLM_PROVIDER=groq` + `GROQ_API_KEY`. `OPENROUTER_API_KEY` is an
-  optional last-resort fallback in either mode.
+| Env var | Where it comes from |
+|---|---|
+| `LLM_PROVIDER` | `local` (default) or `groq`. |
+| `LOCAL_LLM_BASE_URL` | Ollama's OpenAI-compatible endpoint, `http://localhost:11434/v1`. |
+| `LOCAL_LLM_MODEL` | A model you have pulled, e.g. `llama3.1:8b`. |
+| `GROQ_API_KEY` | [console.groq.com/keys](https://console.groq.com/keys) → Create API key. Free tier. **Required** only when `LLM_PROVIDER=groq`; otherwise an optional fallback. |
+| `OPENROUTER_API_KEY` | [openrouter.ai/keys](https://openrouter.ai/keys) → Create key. Optional last-resort fallback. |
+
+- **Local (default, no keys).** Install [Ollama](https://ollama.com/download),
+  then `ollama pull llama3.1:8b`. Any model Ollama serves works;
+  `qwen2.5:7b-instruct` and `gpt-oss:20b` are good alternatives. The first call
+  after idle is slow while the model loads into memory.
+- **Cloud.** Set `LLM_PROVIDER=groq` and `GROQ_API_KEY`. This is what a Railway
+  deployment uses, since there is no Ollama in the cloud.
 
 **Verify it alone.**
 
@@ -170,6 +199,37 @@ uv run pytest -q tests/test_agent.py tests/test_agent_prompts.py tests/test_core
 prompt without touching retrieval; test `output.py` with no LLM; test `tools.py`
 with MCP and RAG faked (see `tests/test_agent.py`); change the model in
 `config.py` without touching anything else.
+
+---
+
+## Core secrets (shared by all three)
+
+| Env var | How to make it |
+|---|---|
+| `JWT_SECRET` | `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Signs the 1-hour session token the SPA holds. |
+| `ENCRYPTION_KEY` | `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. Fernet key that encrypts Google OAuth tokens before they are written to Supabase. Losing it means every user must sign in again. |
+
+---
+
+## Why these services
+
+- **Supabase** is Postgres with the `pgvector` extension, so the relational
+  data (users, personas, rules, emails) and the vector store live in **one**
+  database, one connection, one migration file. Its REST API (PostgREST) means
+  the backend needs no database driver or ORM, and the HNSW index and the
+  `match_embeddings()` function are plain SQL you can read. The free tier is
+  enough for a class. The trade-off: free projects pause after a week of
+  inactivity, so resume it before class.
+- **Ollama** runs the LLM on your laptop for free, with no key and no data
+  leaving the machine, which is ideal for teaching. Groq and OpenRouter are the
+  cloud options when there is no local GPU/RAM.
+- **Vercel** hosts the frontend. The SPA is static files after `vite build`, and
+  Vercel serves them from a CDN with a git-push deploy and a free tier. It
+  cannot run the backend: Python, a long-lived process, and the in-process MCP
+  session manager need a real server.
+- **Railway** hosts the backend for that reason: it runs the `Dockerfile` as a
+  long-running service, gives it a public URL for `GOOGLE_REDIRECT_URI` and
+  `VITE_API_URL`, and holds the secrets as environment variables.
 
 ---
 
@@ -195,12 +255,17 @@ cp backend/.env.example backend/.env        # fill in the values
 cp frontend/.env.example frontend/.env      # VITE_API_URL=http://localhost:8001
 ```
 
-Generate the two secrets:
+Every variable, which subsystem it belongs to, and where to get it:
 
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"                               # JWT_SECRET
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # ENCRYPTION_KEY
-```
+| Variable | Subsystem | Source |
+|---|---|---|
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` | MCP (Gmail) | Google Cloud Console, see section 1 |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | RAG (memory) | Supabase project settings, see section 2 |
+| `LLM_PROVIDER`, `LOCAL_LLM_BASE_URL`, `LOCAL_LLM_MODEL` | Agent (LLM) | Ollama, see section 3 |
+| `GROQ_API_KEY`, `OPENROUTER_API_KEY` | Agent (cloud LLM, optional) | console.groq.com/keys, openrouter.ai/keys |
+| `JWT_SECRET`, `ENCRYPTION_KEY` | Core (auth) | generate locally, see Core secrets |
+| `FRONTEND_URL`, `BACKEND_URL` | Core (ports/CORS) | `http://localhost:5175`, `http://localhost:8001` |
+| `VITE_API_URL` (frontend/.env) | Frontend | same as `BACKEND_URL` |
 
 Ports must agree everywhere: backend **8001** (`BACKEND_URL`,
 `GOOGLE_REDIRECT_URI`, `VITE_API_URL`, the Google Cloud redirect URI) and frontend
