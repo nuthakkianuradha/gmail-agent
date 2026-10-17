@@ -1,15 +1,9 @@
 """FastAPI application entrypoint.
 
-Besides the usual REST routers, this app hosts the Gmail **MCP server**:
-
-- Its session manager is started in the app ``lifespan`` (required — the
-  in-process MCP client the agent uses talks to this running manager).
-- The MCP ASGI app is also mounted at ``/mcp-server`` so external MCP clients
-  (or a separately deployed backend pointed at us via ``MCP_SERVER_URL``) can
-  reach the same tools over the network.
+Besides the usual REST routers, this app is the MCP **host** for the Gmail MCP
+server: see ``app/mcp/host.py`` for the lifespan (session manager) and the
+``/mcp-server`` mount.
 """
-
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -18,21 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.routers import auth, emails, drafts
 from app.routers import settings as settings_router
-from app.mcp.server import mcp_asgi_app, GMAIL_TOOLS
+from app.mcp.host import mcp_lifespan, mount_mcp_server
+from app.mcp.server import GMAIL_TOOLS
 from app.core.auth import GoogleReauthRequired
 
 config = get_settings()
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    # Start the MCP streamable-HTTP session manager for the whole app lifetime.
-    # Without this, in-process tool calls fail with "Task group is not initialized".
-    async with mcp_asgi_app.router.lifespan_context(mcp_asgi_app):
-        yield
-
-
-app = FastAPI(title="Gmail Reply Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Gmail Reply Agent", version="0.1.0", lifespan=mcp_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +28,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 
 @app.exception_handler(GoogleReauthRequired)
@@ -59,9 +45,7 @@ app.include_router(emails.router, prefix="/emails", tags=["emails"])
 app.include_router(drafts.router, prefix="/drafts", tags=["drafts"])
 app.include_router(settings_router.router, prefix="/settings", tags=["settings"])
 
-# Expose the MCP server over the network (in-process transport is the default;
-# this mount is for external MCP clients / remote-mode deployments).
-app.mount("/mcp-server", mcp_asgi_app)
+mount_mcp_server(app)  # /mcp-server, for external MCP clients / remote mode
 
 
 @app.get("/health")

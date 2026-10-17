@@ -1,7 +1,9 @@
-"""MCP **connection** — transport + session wiring between client and server.
+"""MCP role 3 — **TRANSPORT**. How client and server exchange messages.
 
-This module is the single place that knows *how* an MCP client reaches the
-server and how the per-user Gmail token rides along with the request.
+MCP is a JSON-RPC protocol; a *transport* is just the pipe the JSON-RPC
+messages travel through (the spec defines stdio and streamable HTTP). This
+module is the single place that knows *how* our client reaches our server and
+how the per-user Gmail token rides along with every request.
 
 Two transports are supported, both speaking the real MCP protocol:
 
@@ -91,7 +93,7 @@ if __name__ == "__main__":
     async def _smoke() -> None:
         settings = get_settings()
         mode = "remote" if settings.mcp_server_url else "in-process (ASGI)"
-        print(f"MCP connection transport: {mode}")
+        print(f"TRANSPORT: {mode}")
         print(f"  Token header: {TOKEN_HEADER}")
         print(f"  Endpoint: {_mcp_endpoint(settings.mcp_server_url or _INPROCESS_BASE_URL)}")
         # Prove the transport actually connects and lists tools (needs the
@@ -100,6 +102,6 @@ if __name__ == "__main__":
             async with open_session("smoke-test-token") as session:
                 tools = await session.list_tools()
                 print(f"  Tools visible over MCP: {[t.name for t in tools.tools]}")
-        print("MCP connection module OK")
+        print("Transport module OK")
 
     anyio.run(_smoke)

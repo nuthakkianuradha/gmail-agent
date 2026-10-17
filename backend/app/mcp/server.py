@@ -1,8 +1,11 @@
-"""MCP **server** — exposes Gmail as MCP tools.
+"""MCP role 2 — **SERVER**. Exposes Gmail as MCP *tools*.
+
+In MCP a *server* is the thing that owns capabilities (tools, resources,
+prompts) and answers JSON-RPC requests about them. Ours owns four Gmail tools.
 
 A :class:`FastMCP` instance hosts the Gmail toolset. Each tool reads the caller's
 Gmail OAuth access token from the ``X-Gmail-Access-Token`` request header
-(injected by the client, see ``connection.py``) and delegates the actual Google
+(injected by the transport, see ``transport.py``) and delegates the actual Google
 API work to :mod:`app.mcp.gmail` (the raw Google SDK wrapper).
 
 The server speaks the real MCP protocol over streamable HTTP. The resulting ASGI
@@ -33,7 +36,7 @@ GMAIL_TOOLS = [
 def _require_access_token(ctx: Context) -> str:
     """Pull the per-user Gmail access token out of the MCP request headers.
 
-    The client attaches it as ``X-Gmail-Access-Token`` (see ``connection.py``).
+    The transport attaches it as ``X-Gmail-Access-Token`` (see ``transport.py``).
     Raises if it is missing so a tool never runs without a caller identity.
     """
     request = ctx.request_context.request

@@ -83,13 +83,14 @@ gmail-agent/
 │       │   ├── auth.py              # Google OAuth (PKCE), JWT, token refresh
 │       │   └── llm.py               # chat() via provider chain local→Groq→OpenRouter
 │       │
-│       ├── mcp/                 # ★ MCP — Gmail exposed as tools (see §7)
-│       │   ├── gmail.py             # raw Google Gmail SDK wrapper (ONLY server.py imports it)
-│       │   ├── email_parser.py      # MIME/payload parsing used by gmail.py
-│       │   ├── server.py            # FastMCP server + the 4 gmail_* tools
-│       │   ├── connection.py        # transport/session wiring + token header
-│       │   ├── client.py            # GmailMCPClient (typed handle)
-│       │   └── __main__.py          # `python -m app.mcp` smoke check
+│       ├── mcp/                 # ★ MCP — Gmail exposed as tools, one file per MCP role (see §7)
+│       │   ├── gmail.py             # 1 CAPABILITY  raw Gmail SDK wrapper, no MCP in it (ONLY server.py imports it)
+│       │   ├── email_parser.py      #               MIME/payload parsing used by gmail.py
+│       │   ├── server.py            # 2 SERVER      FastMCP owns the 4 gmail_* tools
+│       │   ├── transport.py         # 3 TRANSPORT   in-process ASGI (default) or remote HTTP; token header
+│       │   ├── client.py            # 4 CLIENT      GmailMCPClient: one session, typed methods
+│       │   ├── host.py              # 5 HOST        mcp_lifespan (session manager) + /mcp-server mount for main.py
+│       │   └── __main__.py          # `python -m app.mcp` walks the roles
 │       │
 │       ├── rag/                 # ★ RAG — the agent's memory, one pipeline stage per file (see §8)
 │       │   ├── load.py              # 1 LOAD      record → Document(text, metadata)
@@ -215,28 +216,28 @@ tools block with MCP and RAG faked). To add a second agent, reuse the same 6-blo
 
 ---
 
-## 7. The MCP layer — client / server / connection (`app/mcp/`)
+## 7. The MCP layer — capability / server / transport / client / host (`app/mcp/`)
 
 Gmail is exposed as **MCP tools** over the real protocol (JSON-RPC over
-streamable HTTP). Split into three concerns:
+streamable HTTP). The package has one file per MCP role, read in this order:
 
-| Concern | File | Responsibility |
-|---|---|---|
-| **server** | `server.py` | `build_gmail_mcp()` builds a `FastMCP` (stateless HTTP, DNS-rebinding off) hosting tools: `gmail_list_inbox`, `gmail_get_message`, `gmail_get_thread`, `gmail_send_reply`. Each reads the caller's token from the request header and delegates to `mcp/gmail.py`. Module singletons `mcp` / `mcp_asgi_app` are used in production; the factory lets tests spin up isolated instances (a session manager runs once per instance). |
-| **connection** | `connection.py` | Transport + session wiring. `open_session(access_token)` yields an initialized `ClientSession`. **Default transport = in-process** (`httpx.ASGITransport` at `mcp_asgi_app`, no sockets → single Railway service, testable). **Remote mode** via `MCP_SERVER_URL` (networked streamable HTTP). Propagates the token as the `X-Gmail-Access-Token` header. |
-| **client** | `client.py` | `GmailMCPClient(token)` — an `async with` handle wrapping a `ClientSession`; methods (`get_message`, `send_reply`, …) call tools and parse results back to dicts. The only Gmail surface the agent/routers see. |
+| # | Role | File | Responsibility |
+|---|---|---|---|
+| 1 | **capability** | `gmail.py` | The thing being exposed: a plain Gmail SDK wrapper, every function takes the caller's token. No MCP in it. Imported **only** by `server.py`. |
+| 2 | **server** | `server.py` | `build_gmail_mcp()` builds a `FastMCP` (stateless HTTP, DNS-rebinding off) owning tools `gmail_list_inbox`, `gmail_get_message`, `gmail_get_thread`, `gmail_send_reply`. Each reads the caller's token from the request header and delegates to `gmail.py`. Module singletons `mcp` / `mcp_asgi_app` are used in production; the factory lets tests spin up isolated instances. |
+| 3 | **transport** | `transport.py` | How JSON-RPC messages move. `open_session(access_token)` yields an initialized `ClientSession`. **Default = in-process** (`httpx.ASGITransport` at `mcp_asgi_app`, no sockets → single Railway service, testable). **Remote mode** via `MCP_SERVER_URL` (networked streamable HTTP). Carries the token as the `X-Gmail-Access-Token` header. |
+| 4 | **client** | `client.py` | `GmailMCPClient(token)` — an `async with` handle wrapping a `ClientSession`; methods (`get_message`, `send_reply`, …) call tools and parse results back to dicts. The only Gmail surface the agent/routers see. |
+| 5 | **host** | `host.py` | The FastAPI app's side: `mcp_lifespan` starts the server's streamable-HTTP **session manager** for the app lifetime (without it, in-process tool calls fail with *"Task group is not initialized"*), and `mount_mcp_server` mounts the server at `/mcp-server` for external MCP clients / remote-mode deployments. `main.py` calls both. |
 
 **Per-user tokens:** the MCP server is stateless and carries no credentials. The
-client attaches the user's Gmail OAuth token per request; the server reads it back
-per request. **Critical wiring:** the streamable-HTTP session manager is started
-in the FastAPI **`lifespan`** (`main.py`) — without it, in-process tool calls fail
-with *"Task group is not initialized."* The same app is mounted at `/mcp-server`
-for external MCP clients / remote-mode deployments.
+client attaches the user's Gmail OAuth token per request (via the transport);
+the server reads it back per request.
 
 ```
-ReplyAgent / routers ──GmailMCPClient(token)──▶ connection ──MCP protocol──▶ server (FastMCP)
-                                                (in-process ASGI or remote HTTP)      │
-                                                                            mcp/gmail.py ─▶ Gmail API
+ReplyAgent.tools / routers ──GmailMCPClient(token)──▶ transport ──JSON-RPC──▶ server (FastMCP)
+                                              (in-process ASGI or remote HTTP)         │
+                                                                                 gmail.py ─▶ Gmail API
+                 host (main.py): mcp_lifespan() keeps the server's session manager running; /mcp-server mount
 ```
 
 ---
@@ -323,7 +324,7 @@ npm install
 npm run dev                               # Vite dev server
 
 # Subsystem smoke checks (each package has a __main__)
-uv run python -m app.mcp                  # real MCP session in-process, lists the Gmail tools
+uv run python -m app.mcp                  # walks capability→server→transport→client→host, lists the tools
 uv run python -m app.rag                  # walks load→chunk→embed→(store)→retrieve against the live DB
 uv run python -m app.agent                # the 6 blocks, no network
 uv run python -m app.core.llm             # provider chain
@@ -356,7 +357,7 @@ smoke check. Preserve this when adding modules.
   default primary, Groq then OpenRouter are fallbacks when keys exist; cloud
   mode (`LLM_PROVIDER=groq`) makes Groq primary. Embeddings always run
   **locally** via sentence-transformers (no API).
-- The MCP session manager must be started in the FastAPI `lifespan`.
+- The MCP session manager must be started in the FastAPI `lifespan` (`mcp.host.mcp_lifespan`).
 - Routers are thin adapters — business logic lives in `agent/`, `rag/`, `mcp/`, `core/`.
 - Primary inbox only, single Gmail account per user (current scope).
 

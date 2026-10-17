@@ -1,4 +1,7 @@
-"""Raw Gmail API wrapper (Google SDK). **Only** ``app.mcp.server`` imports this.
+"""MCP role 1 — the **CAPABILITY** being exposed: a raw Gmail API wrapper (Google SDK).
+
+This is ordinary code with no MCP in it. The server turns these functions into
+tools. **Only** ``app.mcp.server`` imports this module.
 
 Every function takes the caller's OAuth access token explicitly — no stored
 credentials, no global state — so the MCP server stays stateless/multi-tenant.

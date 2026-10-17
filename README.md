@@ -34,13 +34,21 @@ MCP server (`gmail_list_inbox`, `gmail_get_message`, `gmail_get_thread`,
 an MCP client, over the real protocol (JSON-RPC over streamable HTTP), even when
 client and server run in the same process.
 
-| File | Role |
-|---|---|
-| `gmail.py` | The raw Google SDK wrapper. Every function takes the caller's OAuth token explicitly. **Imported by `server.py` only.** |
-| `email_parser.py` | MIME/payload parsing used by `gmail.py`. |
-| `server.py` | `FastMCP` server defining the four tools. Each tool reads the caller's token from the `X-Gmail-Access-Token` header and delegates to `gmail.py`. Stateless: no stored credentials. |
-| `connection.py` | Transport + session wiring. Default: **in-process** ASGI transport (no sockets, one deployment). Set `MCP_SERVER_URL` for a remote server. Attaches the per-user token header. |
-| `client.py` | `GmailMCPClient(token)`: an `async with` handle whose methods call tools and return plain dicts. The only Gmail surface the rest of the app sees. |
+MCP names a handful of roles. The package has **one file per role, read in
+order**:
+
+| # | Role | File | What it does |
+|---|---|---|---|
+| 1 | **Capability** | `gmail.py` | The thing being exposed: a plain Gmail SDK wrapper. Every function takes the caller's OAuth token. No MCP in it. **Imported by `server.py` only.** (`email_parser.py` is its MIME helper.) |
+| 2 | **Server** | `server.py` | A `FastMCP` server that owns the four tools. Each tool reads the caller's token from the `X-Gmail-Access-Token` header and delegates to `gmail.py`. Stateless: no stored credentials. |
+| 3 | **Transport** | `transport.py` | How the JSON-RPC messages move. Default: **in-process** ASGI transport (no sockets, one deployment). Set `MCP_SERVER_URL` for a remote server. Attaches the per-user token header. |
+| 4 | **Client** | `client.py` | `GmailMCPClient(token)`: an `async with` handle holding one session; typed methods call tools and return plain dicts. The only Gmail surface the rest of the app sees. |
+| 5 | **Host** | `host.py` | The application that embeds the server: `mcp_lifespan` starts the server's session manager for the app's lifetime, `mount_mcp_server` exposes it at `/mcp-server` for external clients. `main.py` uses both. |
+
+```
+agent.tools / routers ──GmailMCPClient(token)──▶ transport ──JSON-RPC──▶ server ──▶ gmail.py ──▶ Gmail API
+                                                 host (main.py) keeps the server's session manager running
+```
 
 **What you need.**
 
@@ -55,15 +63,16 @@ client and server run in the same process.
 
 ```bash
 cd backend
-uv run python -m app.mcp            # real MCP session in-process; lists the 4 tools
+uv run python -m app.mcp.server     # 2: lists the tools the server owns
+uv run python -m app.mcp.transport  # 3: opens a real session in-process, lists tools over the wire
+uv run python -m app.mcp.host       # 5: what main.py wires
+uv run python -m app.mcp            # walks all five roles
 uv run pytest -q tests/test_mcp.py  # protocol round-trip with the Gmail SDK faked
 ```
 
-**Teach from.** `server.py` (what a tool is), `connection.py` (one protocol, two
-transports), `client.py` (why the agent sees dicts, not Google objects). The
-critical wiring: the server's session manager is started in the FastAPI
-`lifespan` in `main.py`. Without it, in-process tool calls fail with
-"Task group is not initialized".
+**Teach from.** Run the roles' `__main__` in order 1 → 5. The one line that
+bites everyone is the host's lifespan: without the session manager running,
+in-process tool calls fail with "Task group is not initialized".
 
 ---
 

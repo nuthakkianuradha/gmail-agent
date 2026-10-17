@@ -1,8 +1,9 @@
-"""MCP **client** — the typed handle the agent uses to call Gmail tools.
+"""MCP role 4 — **CLIENT**. The typed handle callers use to invoke the tools.
 
-:class:`GmailMCPClient` wraps an MCP :class:`ClientSession` (opened via
-``connection.open_session``) and turns raw ``call_tool`` responses back into
-plain dicts. The agent code depends only on this small surface — it never sees
+In MCP a *client* holds one session with one server and issues ``list_tools``
+/ ``call_tool`` requests. :class:`GmailMCPClient` wraps that
+:class:`ClientSession` (opened via ``transport.open_session``) and turns raw
+``call_tool`` responses back into plain dicts. The agent code depends only on this small surface — it never sees
 JSON-RPC, transports, or the Gmail SDK.
 
 Usage::
@@ -19,7 +20,7 @@ from typing import Any
 
 from mcp.types import CallToolResult
 
-from app.mcp.connection import open_session
+from app.mcp.transport import open_session
 
 
 def _parse_tool_result(result: CallToolResult) -> Any:

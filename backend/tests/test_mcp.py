@@ -2,7 +2,7 @@
 
 These exercise the actual MCP wire protocol (initialize -> list_tools ->
 call_tool) via the ASGI transport, with the Gmail SDK stubbed so no Google call
-is made. They prove the client, connection, and server modules fit together and
+is made. They prove the client, transport, and server modules fit together and
 that the per-user token is propagated over the request header.
 
 Each test gets its own isolated MCP server instance because a streamable-HTTP
@@ -12,7 +12,7 @@ session manager can only be run once per instance.
 import anyio
 import pytest
 
-from app.mcp import server, connection
+from app.mcp import server, transport
 from app.mcp.server import build_gmail_mcp, GMAIL_TOOLS
 from app.mcp.client import GmailMCPClient
 from app.mcp import gmail as gmail_service
@@ -23,7 +23,7 @@ def mcp_app(monkeypatch):
     """A fresh Gmail MCP server app, wired up as the in-process transport target."""
     fresh_mcp, fresh_app = build_gmail_mcp()
     # Point the client's in-process transport at this test's server instance.
-    monkeypatch.setattr(connection, "mcp_asgi_app", fresh_app)
+    monkeypatch.setattr(transport, "mcp_asgi_app", fresh_app)
     return fresh_app
 
 
@@ -104,7 +104,7 @@ def test_mcp_missing_token_is_rejected(mcp_app):
         # Bypass the client's header injection by opening a raw session with no token.
         from mcp.client.session import ClientSession
         from mcp.client.streamable_http import streamablehttp_client
-        from app.mcp.connection import _inprocess_client_factory, _mcp_endpoint, _INPROCESS_BASE_URL
+        from app.mcp.transport import _inprocess_client_factory, _mcp_endpoint, _INPROCESS_BASE_URL
 
         endpoint = _mcp_endpoint(_INPROCESS_BASE_URL)
         async with streamablehttp_client(
