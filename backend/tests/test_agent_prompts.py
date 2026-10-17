@@ -1,4 +1,6 @@
-from app.utils.prompt_templates import DRAFT_SYSTEM_PROMPT, DRAFT_PROMPT, DIFF_SUMMARY_PROMPT
+from app.agent.system_prompt import REPLY_SYSTEM_PROMPT as DRAFT_SYSTEM_PROMPT
+from app.agent.input import REPLY_INPUT_TEMPLATE as DRAFT_PROMPT
+from app.rag.learning import DIFF_SUMMARY_PROMPT
 
 
 def test_draft_system_prompt_exists():

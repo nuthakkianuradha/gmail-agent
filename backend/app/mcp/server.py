@@ -3,7 +3,7 @@
 A :class:`FastMCP` instance hosts the Gmail toolset. Each tool reads the caller's
 Gmail OAuth access token from the ``X-Gmail-Access-Token`` request header
 (injected by the client, see ``connection.py``) and delegates the actual Google
-API work to :mod:`app.services.gmail_service`.
+API work to :mod:`app.mcp.gmail` (the raw Google SDK wrapper).
 
 The server speaks the real MCP protocol over streamable HTTP. The resulting ASGI
 app (``mcp_asgi_app``) is mounted into the FastAPI app *and* used in-process by
@@ -18,7 +18,7 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.applications import Starlette
 
-from app.services import gmail_service
+from app.mcp import gmail as gmail_service
 
 # Names of the tools this server exposes (kept in sync with the definitions in
 # ``build_gmail_mcp``). Handy for docs, health checks, and tests.

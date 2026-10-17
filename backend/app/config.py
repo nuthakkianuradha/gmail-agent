@@ -1,5 +1,7 @@
-from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import Literal
+
+from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
@@ -12,9 +14,20 @@ class Settings(BaseSettings):
     supabase_url: str
     supabase_service_key: str
 
-    # LLMs
-    groq_api_key: str
-    openrouter_api_key: str
+    # LLM provider selection.
+    #   local = Ollama (or any OpenAI-compatible local server) is the primary;
+    #           Groq / OpenRouter are used as fallbacks only if their keys are set.
+    #   groq  = Groq is the primary, OpenRouter the fallback (cloud mode).
+    llm_provider: Literal["local", "groq"] = "local"
+    local_llm_base_url: str = "http://localhost:11434/v1"
+    local_llm_model: str = "llama3.1:8b"
+    # Cheap model for "what did the user change?" summaries. Empty = same as
+    # local_llm_model.
+    local_llm_summary_model: str = ""
+
+    # Cloud LLM keys — optional. Empty means that provider is skipped.
+    groq_api_key: str = ""
+    openrouter_api_key: str = ""
 
     # Security
     jwt_secret: str
@@ -54,4 +67,9 @@ if __name__ == "__main__":
     print(f"  Backend URL: {settings.backend_url}")
     print(f"  Supabase URL: {settings.supabase_url[:30]}...")
     print(f"  Google Client ID: {settings.google_client_id[:20]}...")
+    print(f"  LLM provider: {settings.llm_provider}")
+    if settings.llm_provider == "local":
+        print(f"  Local LLM: {settings.local_llm_model} @ {settings.local_llm_base_url}")
+    print(f"  Groq key: {'set' if settings.groq_api_key else 'not set'}")
+    print(f"  OpenRouter key: {'set' if settings.openrouter_api_key else 'not set'}")
     print(f"  Scopes: {len(settings.google_scopes)} configured")

@@ -1,9 +1,8 @@
 """Agent block: **input**.
 
 Renders the agent's ``state`` plus the incoming email into the user-turn prompt
-that goes to the model. This is the canonical home of the reply input template;
-:mod:`app.utils.prompt_templates` re-exports it as ``DRAFT_PROMPT`` for backward
-compatibility.
+that goes to the model. This is the canonical (and only) home of the reply
+input template.
 
 Kept deliberately dependency-light: it accepts a duck-typed ``state`` object
 (anything with ``persona``, ``rules``, ``past_emails``, ``modifications``) so it

@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import MDEditor from '@uiw/react-md-editor';
+// v4 no longer auto-injects its stylesheet — without these the editor renders
+// unstyled (collapsed layout) and is effectively uneditable.
+import '@uiw/react-md-editor/markdown-editor.css';
+import '@uiw/react-markdown-preview/markdown.css';
 
 interface Props {
   initialDraft: string;

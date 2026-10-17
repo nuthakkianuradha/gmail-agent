@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.services.auth_service import decode_jwt, get_user_by_id
+from app.core.auth import decode_jwt, get_user_by_id
 from jose import JWTError
 
 security = HTTPBearer()
@@ -31,7 +31,7 @@ async def get_current_user(
 
 
 if __name__ == "__main__":
-    from app.services.auth_service import create_jwt
+    from app.core.auth import create_jwt
 
     # Simulate a JWT decode
     token = create_jwt("fake-id", "test@test.com")

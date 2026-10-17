@@ -1,5 +1,5 @@
 import base64
-from app.utils.email_parser import (
+from app.mcp.email_parser import (
     decode_base64,
     get_header,
     extract_body,

@@ -8,7 +8,7 @@ protocol to the Gmail tool server. The router never calls the Gmail SDK directly
 from fastapi import APIRouter, Depends, Query
 
 from app.dependencies import get_current_user
-from app.services import auth_service
+from app.core import auth as auth_service
 from app.mcp.client import GmailMCPClient
 from app.models.email import InboxResponse, EmailMessage, ThreadResponse
 

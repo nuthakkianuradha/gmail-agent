@@ -5,6 +5,10 @@ sample, and how much memory to retrieve. This is distinct from
 :mod:`app.config` (process/environment settings): ``AgentConfig`` is the agent's
 *behavioral* configuration and can be varied per request or per experiment
 without touching env vars.
+
+``AgentConfig.default()`` is the one place env leaks in: it picks
+``primary_model`` for whichever LLM provider is active (``LLM_PROVIDER``), so a
+local Ollama model name never gets sent to Groq or vice versa.
 """
 
 from dataclasses import dataclass
@@ -13,7 +17,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class AgentConfig:
     # --- LLM ---
-    primary_model: str = "llama-3.3-70b-versatile"      # Groq (fast, primary)
+    primary_model: str = "openai/gpt-oss-120b"           # Groq default (cloud mode)
     fallback_model: str = "google/gemini-2.0-flash-001"  # OpenRouter (fallback)
     temperature: float = 0.7
     max_tokens: int = 1024
@@ -25,6 +29,12 @@ class AgentConfig:
 
     @classmethod
     def default(cls) -> "AgentConfig":
+        """Default config for the active LLM provider."""
+        from app.config import get_settings  # local import: keep the block leaf-like
+
+        s = get_settings()
+        if s.llm_provider == "local":
+            return cls(primary_model=s.local_llm_model)
         return cls()
 
 

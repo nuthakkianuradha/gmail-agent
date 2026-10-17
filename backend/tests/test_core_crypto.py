@@ -1,6 +1,6 @@
 import pytest
 from cryptography.fernet import Fernet
-from app.utils.crypto import encrypt_token, decrypt_token
+from app.core.crypto import encrypt_token, decrypt_token
 
 
 @pytest.fixture

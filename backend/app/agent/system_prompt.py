@@ -1,9 +1,7 @@
 """Agent block: **system prompt**.
 
 The agent's standing instructions to the model — its role and hard constraints.
-This is the canonical home for the reply system prompt;
-:mod:`app.utils.prompt_templates` re-exports it as ``DRAFT_SYSTEM_PROMPT`` for
-backward compatibility.
+This is the canonical (and only) home of the reply system prompt.
 """
 
 REPLY_SYSTEM_PROMPT = """You are an email reply assistant. Draft a reply to the email below.

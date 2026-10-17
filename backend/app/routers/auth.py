@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from app.services import auth_service
+from app.core import auth as auth_service
 from app.dependencies import get_current_user
 from app.config import get_settings
 from app.models.user import UserProfile
@@ -24,6 +24,8 @@ async def callback(code: str, state: str | None = None):
         jwt_token = auth_service.create_jwt(user["id"], user["email"])
         redirect_url = f"{settings.frontend_url}/auth/callback?token={jwt_token}"
         return RedirectResponse(url=redirect_url)
+    except auth_service.GoogleScopesNotGranted as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"OAuth callback failed: {str(e)}")
 

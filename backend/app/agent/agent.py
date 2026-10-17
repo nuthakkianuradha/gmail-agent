@@ -14,10 +14,9 @@ from app.agent.state import AgentState
 from app.agent.input import build_input
 from app.agent.system_prompt import build_system_prompt
 from app.agent.output import ReplyAgentOutput, parse_output
+from app.core import auth, llm
 from app.mcp.client import GmailMCPClient
-from app.services import auth_service, archive_service
-from app.services.llm_service import generate_draft
-from app.services.modification_service import store_modification
+from app.rag.learning import archive_sent_email, store_modification
 
 
 class ReplyAgent:
@@ -27,7 +26,7 @@ class ReplyAgent:
         self.user = user
         self.config = config or AgentConfig.default()
         # Decrypt once; the token is only ever handed to the MCP client.
-        self._access_token = auth_service.get_decrypted_access_token(user)
+        self._access_token = auth.get_decrypted_access_token(user)
 
     def _gmail(self) -> GmailMCPClient:
         return GmailMCPClient(self._access_token)
@@ -46,10 +45,10 @@ class ReplyAgent:
         user_prompt = build_input(email, state)
 
         # 4. MODEL — generate, governed by CONFIG.
-        raw = await generate_draft(
-            system_prompt,
+        raw = await llm.chat(
             user_prompt,
-            primary_model=self.config.primary_model,
+            system_prompt=system_prompt,
+            model=self.config.primary_model,
             fallback_model=self.config.fallback_model,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
@@ -82,7 +81,7 @@ class ReplyAgent:
         gmail_sent_id = sent.get("id", "")
 
         # Archive the sent email into long-term memory (also embeds it for RAG).
-        archive_service.archive_sent_email(
+        archive_sent_email(
             user_id=self.user["id"],
             gmail_message_id=gmail_sent_id,
             gmail_thread_id=gmail_thread_id,

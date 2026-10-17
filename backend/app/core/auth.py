@@ -3,9 +3,11 @@ from jose import jwt
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.auth.exceptions import RefreshError
 from app.config import get_settings
-from app.utils.crypto import encrypt_token, decrypt_token
-from app.db.supabase_client import get_supabase
+from app.core.crypto import encrypt_token, decrypt_token
+from app.core.db import get_supabase
 
 settings = get_settings()
 
@@ -13,6 +15,29 @@ GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 # Store pending OAuth flows keyed by state (in-memory, fine for single-server dev)
 _pending_flows: dict[str, Flow] = {}
+
+
+class GoogleReauthRequired(Exception):
+    """The stored Google refresh token no longer works; the user must sign in again.
+
+    Typical cause: Testing-mode OAuth apps get refresh tokens that Google
+    expires after 7 days, or the user revoked access. main.py maps this to 401
+    so the SPA drops its JWT and goes back to /login.
+    """
+
+
+class GoogleScopesNotGranted(Exception):
+    """Google completed sign-in but did not grant the Gmail scopes we asked for.
+
+    Google shows the Gmail permissions as separate checkboxes on the consent
+    screen; if they are left unticked (or the Gmail API / scopes are not set up
+    on the Cloud project) the token only carries openid/profile/email and the
+    app cannot read or send mail. We refuse the login rather than store a
+    useless token.
+    """
+
+
+GMAIL_SCOPES = tuple(s for s in settings.google_scopes if "/gmail." in s)
 
 
 def build_oauth_flow() -> Flow:
@@ -51,7 +76,24 @@ def exchange_code_for_tokens(code: str, state: str) -> dict:
     if flow is None:
         flow = build_oauth_flow()
 
-    flow.fetch_token(code=code)
+    try:
+        flow.fetch_token(code=code)
+    except Warning as w:
+        # requests-oauthlib raises a bare Warning("Scope has changed from ... to ...")
+        # when Google grants fewer scopes than requested.
+        if "Scope has changed" not in str(w):
+            raise
+        granted = str(w).split(" to ")[-1].strip('". ')
+        missing = [sc for sc in GMAIL_SCOPES if sc not in granted]
+        short = ", ".join(sc.rsplit("/", 1)[-1] for sc in missing) or "gmail.*"
+        raise GoogleScopesNotGranted(
+            f"Google signed you in but did not grant Gmail access ({short}). "
+            "On the Google consent screen, tick ALL the permission checkboxes "
+            "(read, send, and manage email), then sign in again. If there are no "
+            "Gmail checkboxes at all, enable the Gmail API and add the gmail.readonly, "
+            "gmail.send and gmail.modify scopes on the OAuth consent screen in Google "
+            "Cloud Console."
+        ) from w
     credentials = flow.credentials
     return {
         "access_token": credentials.token,
@@ -74,10 +116,18 @@ def refresh_access_token(refresh_token: str) -> dict:
         client_id=settings.google_client_id,
         client_secret=settings.google_client_secret,
     )
-    creds.refresh(None)
+    # google-auth needs a transport to hit the token endpoint; passing None
+    # raises "'NoneType' object is not callable" the first time a token expires.
+    try:
+        creds.refresh(GoogleAuthRequest())
+    except RefreshError as e:
+        raise GoogleReauthRequired(str(e)) from e
+    # google-auth returns a naive UTC expiry; store it tz-aware so it compares
+    # cleanly with datetime.now(timezone.utc) in get_decrypted_access_token.
+    expiry = creds.expiry.replace(tzinfo=timezone.utc) if creds.expiry else None
     return {
         "access_token": creds.token,
-        "expiry": creds.expiry.isoformat() if creds.expiry else None,
+        "expiry": expiry.isoformat() if expiry else None,
     }
 
 

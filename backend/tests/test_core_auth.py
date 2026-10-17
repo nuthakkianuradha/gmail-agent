@@ -1,7 +1,7 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 from jose import jwt as jose_jwt
-from app.services.auth_service import create_jwt, decode_jwt
+from app.core.auth import create_jwt, decode_jwt
 from app.config import get_settings
 
 settings = get_settings()

@@ -1,8 +1,14 @@
+"""Raw Gmail API wrapper (Google SDK). **Only** ``app.mcp.server`` imports this.
+
+Every function takes the caller's OAuth access token explicitly — no stored
+credentials, no global state — so the MCP server stays stateless/multi-tenant.
+"""
+
 import base64
 from email.mime.text import MIMEText
 from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
-from app.utils.email_parser import parse_gmail_message, get_header
+from app.mcp.email_parser import parse_gmail_message, get_header
 
 
 def _get_gmail_client(access_token: str):

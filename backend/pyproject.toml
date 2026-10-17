@@ -17,7 +17,10 @@ dependencies = [
     "sentence-transformers>=3.0.0",
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.9",
-    "mcp>=1.28.1",
+    # Pin below 2.0: this repo uses the SDK v1 API (mcp.server.fastmcp.FastMCP).
+    # In SDK v2 that class was renamed to MCPServer, so an unpinned
+    # "mcp>=1.28.1" resolves to 2.x and app/mcp/server.py fails to import.
+    "mcp>=1.28.1,<2",
 ]
 
 [project.optional-dependencies]

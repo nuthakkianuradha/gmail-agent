@@ -10,13 +10,12 @@ moving parts stay small and independently testable:
 - ``input``          — turns ``state`` + the incoming email into the user prompt.
 - ``output``         — parses the raw model text into a structured result.
 
-``agent.ReplyAgent`` is the orchestrator that wires the five blocks together and
-reaches Gmail exclusively through the MCP client.
+``agent.ReplyAgent`` is the orchestrator that wires the five blocks together.
+It reaches Gmail exclusively through ``app.mcp`` (the MCP client), memory
+exclusively through ``app.rag``, and the model through ``app.core.llm``.
 
-NOTE: submodules are intentionally NOT imported here. ``app.utils.prompt_templates``
-re-exports the prompt strings that live in ``system_prompt``/``input``; importing
-those submodules eagerly from this package would create an import cycle. Import
-the block you need directly, e.g. ``from app.agent.agent import ReplyAgent``.
+Submodules are not imported eagerly; import the block you need directly, e.g.
+``from app.agent.agent import ReplyAgent``.
 """
 
 __all__ = []

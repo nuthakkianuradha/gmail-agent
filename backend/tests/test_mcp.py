@@ -15,7 +15,7 @@ import pytest
 from app.mcp import server, connection
 from app.mcp.server import build_gmail_mcp, GMAIL_TOOLS
 from app.mcp.client import GmailMCPClient
-from app.services import gmail_service
+from app.mcp import gmail as gmail_service
 
 
 @pytest.fixture
