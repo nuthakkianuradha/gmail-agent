@@ -12,7 +12,7 @@ and tested on its own:
 |---|---|---|---|
 | **MCP** | `backend/app/mcp/` | Gmail exposed as MCP *tools* over the real protocol | A Google Cloud OAuth client with the Gmail API enabled |
 | **RAG** | `backend/app/rag/` | The agent's memory: embed → store → retrieve → learn | A Supabase project with pgvector (+ a 420 MB local embedding model) |
-| **Agent** | `backend/app/agent/` | Five small blocks + an orchestrator that turn an email into a draft | An LLM: Ollama locally (default) or a Groq key |
+| **Agent** | `backend/app/agent/` | Six small blocks + an orchestrator that turn an email into a draft | An LLM: Ollama locally (default) or a Groq key |
 
 Shared plumbing lives in `backend/app/core/` (database client, crypto, OAuth/JWT,
 LLM provider chain). Dependencies point one way and a test enforces it:
@@ -104,10 +104,12 @@ function and index live in `002_full_schema.sql`.
 
 ---
 
-## 3. Agent — five blocks + orchestrator (`app/agent/`)
+## 3. Agent — six blocks + orchestrator (`app/agent/`)
 
-**Idea.** Every LLM agent here has the same five small, independently testable
-blocks. The orchestrator wires them, and is the only place where MCP, RAG, and
+**Idea.** Every LLM agent here has the same six small, independently testable
+blocks: what it is told (system prompt), how it is tuned (config), what it knows
+(state), what it is asked (input), what it returns (output), and what it can do
+(tools). The orchestrator wires them and is the only place where MCP, RAG, and
 the LLM meet.
 
 | # | Block | File | In → Out |
@@ -117,14 +119,15 @@ the LLM meet.
 | 3 | **state** | `state.py` | `AgentState.load(user, email)`: persona + rules + RAG neighbours, via `app.rag.retrieval`. |
 | 4 | **input** | `input.py` | Renders state + the incoming email into the user prompt. |
 | 5 | **output** | `output.py` | Cleans the raw model text into `ReplyAgentOutput{draft, context_used}`. |
-| — | **orchestrator** | `agent.py` | `ReplyAgent.generate_reply()` and `send_reply()`. Gmail via `app.mcp`, memory via `app.rag`, model via `app.core.llm.chat()`. |
+| 6 | **tools** | `tools.py` | `AgentTools`: what the agent can *do*. `get_email`, `send_reply` (Gmail over `app.mcp`); `remember_sent_email`, `remember_edit` (memory writes via `app.rag.learning`). `TOOLS` lists them. |
+| — | **orchestrator** | `agent.py` | `ReplyAgent.generate_reply()` and `send_reply()`. Every side effect goes through `tools`; the model through `app.core.llm.chat()`. |
 
 ```
 generate_reply(message_id):
-  config → [MCP: get_message] → state (RAG) → system_prompt + input → core.llm.chat → output
+  config → tools.get_email → state (RAG) → system_prompt + input → core.llm.chat → output
 
 send_reply(...):
-  [MCP: send_reply] → rag.learning.archive_sent_email → rag.learning.store_modification (if edited)
+  tools.get_email → tools.send_reply → tools.remember_sent_email → tools.remember_edit (if edited)
 ```
 
 **What you need.** An LLM, through `app/core/llm.py`'s provider chain
@@ -141,14 +144,15 @@ send_reply(...):
 
 ```bash
 cd backend
-uv run python -m app.agent                 # the 5 blocks, no network
+uv run python -m app.agent                 # the 6 blocks, no network
 uv run python -m app.core.llm              # prints the provider chain
 uv run pytest -q tests/test_agent.py tests/test_agent_prompts.py tests/test_core_llm.py
 ```
 
 **Teach from.** Read the blocks in numeric order, then `agent.py`. Swap the
-prompt without touching retrieval; test `output.py` with no LLM; change the model
-in `config.py` without touching anything else.
+prompt without touching retrieval; test `output.py` with no LLM; test `tools.py`
+with MCP and RAG faked (see `tests/test_agent.py`); change the model in
+`config.py` without touching anything else.
 
 ---
 
@@ -219,7 +223,7 @@ cd backend && uv run pytest -q
 |---|---|
 | `test_architecture.py` | The package boundaries above. Fails on any cross-subsystem shortcut. |
 | `test_mcp.py`, `test_mcp_email_parser.py` | Real MCP round-trip in-process (SDK faked); MIME parsing. |
-| `test_agent.py`, `test_agent_prompts.py` | The five blocks and their prompts, no network. |
+| `test_agent.py`, `test_agent_prompts.py` | The blocks and their prompts, no network; the tools block with MCP/RAG faked. |
 | `test_core_llm.py`, `test_core_auth.py`, `test_core_crypto.py` | Provider chain order and fallthrough; JWT; Fernet. |
 | `test_models.py` | Pydantic schemas. |
 

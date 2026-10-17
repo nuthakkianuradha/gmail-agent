@@ -1,13 +1,14 @@
-"""`uv run python -m app.agent` — smoke-check the agent's five blocks without
-any network: build a state snapshot, render the prompts, parse an output."""
+"""`uv run python -m app.agent` — smoke-check the agent's six blocks without
+any network: build a state snapshot, render the prompts, parse an output, list tools."""
 
 from app.agent.config import AgentConfig
 from app.agent.input import build_input
 from app.agent.output import parse_output
 from app.agent.state import AgentState
 from app.agent.system_prompt import build_system_prompt
+from app.agent.tools import TOOLS
 
-print("Agent subsystem (5 blocks + orchestrator)")
+print("Agent subsystem (6 blocks + orchestrator)")
 cfg = AgentConfig.default()
 print(f"  1 config:        primary_model={cfg.primary_model!r}, retrieval k={cfg.match_count} thr={cfg.match_threshold}")
 sp = build_system_prompt()
@@ -24,5 +25,6 @@ up = build_input(email, state)
 print(f"  4 input:         {len(up)} chars rendered from state + email")
 out = parse_output("```\nSure, noon works for me.\n```", context_used=state.context_count)
 print(f"  5 output:        {out.draft!r} (context_used={out.context_used})")
-print("  orchestrator:    ReplyAgent.generate_reply / send_reply  (uses app.mcp + app.rag + app.core.llm)")
+print(f"  6 tools:         {', '.join(t.name for t in TOOLS)}")
+print("  orchestrator:    ReplyAgent.generate_reply / send_reply  (side effects only via tools)")
 print("Agent subsystem OK")

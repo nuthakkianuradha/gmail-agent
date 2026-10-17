@@ -1,22 +1,21 @@
 """The reply agent orchestrator.
 
-Wires the five blocks together for the two things the agent does:
+Wires the six blocks together for the two things the agent does:
 
-    generate_reply(message_id)   config → [Gmail via MCP] → state → input → LLM → output
-    send_reply(...)              [Gmail via MCP] → archive + learn from edits
+    generate_reply(message_id)   config → tools.get_email → state → system_prompt + input → model → output
+    send_reply(...)              tools.get_email → tools.send_reply → tools.remember_sent_email (+ remember_edit)
 
-The agent reaches Gmail **exclusively** through the MCP client — it never calls
-the Gmail SDK or touches an OAuth token beyond handing it to the client.
+Side effects (Gmail, memory writes) go through the **tools** block only. The
+orchestrator holds no Gmail client and no DB handle of its own.
 """
 
 from app.agent.config import AgentConfig
-from app.agent.state import AgentState
 from app.agent.input import build_input
-from app.agent.system_prompt import build_system_prompt
 from app.agent.output import ReplyAgentOutput, parse_output
+from app.agent.state import AgentState
+from app.agent.system_prompt import build_system_prompt
+from app.agent.tools import AgentTools
 from app.core import auth, llm
-from app.mcp.client import GmailMCPClient
-from app.rag.learning import archive_sent_email, store_modification
 
 
 class ReplyAgent:
@@ -25,26 +24,26 @@ class ReplyAgent:
     def __init__(self, user: dict, config: AgentConfig | None = None):
         self.user = user
         self.config = config or AgentConfig.default()
-        # Decrypt once; the token is only ever handed to the MCP client.
-        self._access_token = auth.get_decrypted_access_token(user)
-
-    def _gmail(self) -> GmailMCPClient:
-        return GmailMCPClient(self._access_token)
+        # Decrypt once; the token lives only inside the tools block.
+        self.tools = AgentTools(
+            user_id=user["id"],
+            user_email=user["email"],
+            access_token=auth.get_decrypted_access_token(user),
+        )
 
     async def generate_reply(self, gmail_message_id: str) -> ReplyAgentOutput:
         """Run the full generate pipeline and return a structured draft."""
-        # 1. INPUT SOURCE — fetch the email to reply to over MCP.
-        async with self._gmail() as gmail:
-            email = await gmail.get_message(gmail_message_id)
+        # TOOLS — fetch the email to reply to (over MCP).
+        email = await self.tools.get_email(gmail_message_id)
 
-        # 2. STATE — load persona, rules, and RAG memory for this email.
+        # STATE — persona, rules, and RAG memory for this email.
         state = AgentState.load(self.user["id"], email, self.config)
 
-        # 3. SYSTEM PROMPT + INPUT — assemble the model turns.
+        # SYSTEM PROMPT + INPUT — assemble the model turns.
         system_prompt = build_system_prompt()
         user_prompt = build_input(email, state)
 
-        # 4. MODEL — generate, governed by CONFIG.
+        # MODEL — governed by CONFIG.
         raw = await llm.chat(
             user_prompt,
             system_prompt=system_prompt,
@@ -54,7 +53,7 @@ class ReplyAgent:
             max_tokens=self.config.max_tokens,
         )
 
-        # 5. OUTPUT — parse into a clean, structured result.
+        # OUTPUT — parse into a clean, structured result.
         return parse_output(raw, context_used=state.context_count)
 
     async def send_reply(
@@ -66,37 +65,28 @@ class ReplyAgent:
         body: str,
         draft_before: str | None = None,
     ) -> dict:
-        """Send the reply over MCP, archive it, and learn from any user edits."""
-        async with self._gmail() as gmail:
-            # Need the original message's Message-ID header for correct threading.
-            original = await gmail.get_message(gmail_message_id)
-            sent = await gmail.send_reply(
-                to=to,
-                subject=subject,
-                body=body,
-                thread_id=gmail_thread_id,
-                message_id_header=original.get("message_id_header", ""),
-            )
-
+        """Send the reply, remember it, and learn from any user edits."""
+        # TOOLS — the original message's Message-ID header is needed for threading.
+        original = await self.tools.get_email(gmail_message_id)
+        sent = await self.tools.send_reply(
+            to=to,
+            subject=subject,
+            body=body,
+            thread_id=gmail_thread_id,
+            message_id_header=original.get("message_id_header", ""),
+        )
         gmail_sent_id = sent.get("id", "")
 
-        # Archive the sent email into long-term memory (also embeds it for RAG).
-        archive_sent_email(
-            user_id=self.user["id"],
+        # TOOLS — grow memory: the sent email, and the edit if there was one.
+        self.tools.remember_sent_email(
             gmail_message_id=gmail_sent_id,
             gmail_thread_id=gmail_thread_id,
-            from_address=self.user["email"],
-            to_address=to,
+            to=to,
             subject=subject,
-            body_text=body,
+            body=body,
         )
-
-        # STATE UPDATE / LEARNING — if the user edited the AI draft, record the
-        # before/after so future retrievals reflect their preferences.
         if draft_before and draft_before != body:
-            await store_modification(
-                user_id=self.user["id"],
-                email_id=None,
+            await self.tools.remember_edit(
                 subject=subject,
                 snippet=original.get("snippet", ""),
                 draft_before=draft_before,
@@ -107,8 +97,8 @@ class ReplyAgent:
 
 
 if __name__ == "__main__":
-    print("ReplyAgent — orchestrates the 5 agent blocks over the MCP client")
+    print("ReplyAgent — orchestrates the 6 agent blocks")
     print("  generate_reply(gmail_message_id) -> ReplyAgentOutput")
     print("  send_reply(thread_id, message_id, to, subject, body, draft_before?) -> dict")
-    print("  blocks: config, system_prompt, state, input, output")
+    print("  blocks: config, system_prompt, state, input, output, tools")
     print("ReplyAgent module OK")

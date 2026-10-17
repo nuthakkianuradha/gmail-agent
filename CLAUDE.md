@@ -5,7 +5,7 @@
 > history → review/edit in a markdown editor → send. Every send teaches it more.
 
 This file is the architectural source of truth. It explains **what each part is
-for, how the pieces connect, and how the agent is organized into 5 blocks with
+for, how the pieces connect, and how the agent is organized into 6 blocks with
 Gmail exposed over MCP.**
 
 ---
@@ -98,13 +98,14 @@ gmail-agent/
 │       │   ├── learning.py          # feedback loop: archive sent + store edits (+LLM diff summary)
 │       │   └── __main__.py          # `python -m app.rag` smoke check
 │       │
-│       ├── agent/               # ★ AGENT — 5 blocks + orchestrator (see §6)
+│       ├── agent/               # ★ AGENT — 6 blocks + orchestrator (see §6)
 │       │   ├── config.py            # block: config   (AgentConfig)
 │       │   ├── system_prompt.py     # block: system prompt
 │       │   ├── state.py             # block: state    (AgentState: memory via rag)
 │       │   ├── input.py             # block: input    (prompt assembly)
 │       │   ├── output.py            # block: output   (parse/clean result)
-│       │   ├── agent.py             # ReplyAgent orchestrator (ties the 5 blocks)
+│       │   ├── tools.py             # block: tools    (AgentTools: Gmail via MCP, memory writes via RAG)
+│       │   ├── agent.py             # ReplyAgent orchestrator (ties the 6 blocks)
 │       │   └── __main__.py          # `python -m app.agent` smoke check
 │       │
 │       ├── routers/             # Thin HTTP adapters (no business logic)
@@ -149,7 +150,7 @@ Auth guard: `dependencies.get_current_user` decodes the JWT and loads the user r
 ```
 POST /drafts/generate  → routers/drafts → ReplyAgent(user).generate_reply(msg_id)
   1. CONFIG        AgentConfig.default()
-  2. [MCP] fetch   GmailMCPClient.get_message(id) ──MCP──▶ gmail_get_message tool ──▶ Gmail API
+  2. TOOLS         tools.get_email(id) ──GmailMCPClient──MCP──▶ gmail_get_message tool ──▶ Gmail API
   3. STATE         AgentState.load(): embed email → match_embeddings (pgvector)
                    → similar past emails + past edits; + persona + active rules
   4. SYSTEM+INPUT  build_system_prompt() + build_input(email, state)
@@ -161,10 +162,10 @@ POST /drafts/generate  → routers/drafts → ReplyAgent(user).generate_reply(ms
 ### 4c. Send (and learn)
 ```
 POST /drafts/send  → ReplyAgent(user).send_reply(...)
-  [MCP] get_message (for Message-ID threading header)
-  [MCP] gmail_send_reply  ──MCP──▶ Gmail API (in-thread reply)
-  rag.learning.archive_sent_email()  → emails table (outbound) + embed it
-  if user edited draft: rag.learning.store_modification()
+  TOOLS tools.get_email (for Message-ID threading header)      ──MCP──▶ Gmail API
+  TOOLS tools.send_reply ──MCP──▶ gmail_send_reply (in-thread reply)
+  TOOLS tools.remember_sent_email → rag.learning.archive_sent_email → emails table + embed
+  if user edited draft: TOOLS tools.remember_edit → rag.learning.store_modification()
         → summarize_diff (LLM) → modifications table + embed the before/after
 ```
 Reading inbox/message/thread (`/emails/*`) also goes **through the MCP client** —
@@ -181,9 +182,9 @@ tool in `server.py` + a method on `GmailMCPClient`, not a direct SDK call.
 
 ---
 
-## 6. The Agent — organized as 5 blocks (`app/agent/`)
+## 6. The Agent — organized as 6 blocks (`app/agent/`)
 
-Every LLM agent here is decomposed into the same five small, independently
+Every LLM agent here is decomposed into the same six small, independently
 testable blocks, plus an orchestrator. The blocks are pure/leaf where possible so
 they can be unit-tested without DB/LLM/network.
 
@@ -194,14 +195,16 @@ they can be unit-tested without DB/LLM/network.
 | 3 | **state** | `state.py` | `AgentState.load(user_id, email, config)` gathers everything from **memory**: persona, active rules, and RAG-retrieved similar emails + past edits (via `app.rag.retrieval`). `context_count` = items retrieved. | email → `AgentState` |
 | 4 | **input** | `input.py` | Renders `state` + the incoming email into the model's **user prompt** (`build_input`). Canonical home of `REPLY_INPUT_TEMPLATE`. Duck-typed on `state` to avoid import cycles. | (email, state) → `str` |
 | 5 | **output** | `output.py` | `parse_output(raw, context_used)` cleans the model text (strips fences/quotes/whitespace) into a structured `ReplyAgentOutput{draft, context_used}`. | raw text → `ReplyAgentOutput` |
-| — | **orchestrator** | `agent.py` | `ReplyAgent(user, config)` wires the blocks for `generate_reply()` and `send_reply()`. Holds the decrypted token **only** to hand to the MCP client; delegates archiving/learning to `app.rag.learning`. | — |
+| 6 | **tools** | `tools.py` | `AgentTools`: what the agent can *do* besides calling the model. Gmail tools (`get_email`, `send_reply`) are backed by `app.mcp`; memory tools (`remember_sent_email`, `remember_edit`) by `app.rag.learning`. `TOOLS` is the registry. | call → dict |
+| — | **orchestrator** | `agent.py` | `ReplyAgent(user, config)` wires the blocks for `generate_reply()` and `send_reply()`. Every side effect goes through `tools`; it holds no Gmail client or DB handle itself. | — |
 
 **Data flow inside `generate_reply`:**
-`config → (MCP fetch email) → state → (system_prompt + input) → LLM → output`.
+`config → tools.get_email → state → (system_prompt + input) → LLM → output`.
+**Inside `send_reply`:** `tools.get_email → tools.send_reply → tools.remember_sent_email (+ tools.remember_edit if edited)`.
 
 **Why blocks:** each concern is swappable and testable in isolation (e.g. change
-the prompt without touching retrieval; test output parsing with no LLM). To add a
-second agent, reuse the same 5-block shape.
+the prompt without touching retrieval; test output parsing with no LLM; test the
+tools block with MCP and RAG faked). To add a second agent, reuse the same 6-block shape.
 
 > Prompt strings live with their users: the reply prompts in the agent blocks
 > (`system_prompt.py`, `input.py`), the diff-summary prompt in `rag/learning.py`.
@@ -316,7 +319,7 @@ npm run dev                               # Vite dev server
 # Subsystem smoke checks (each package has a __main__)
 uv run python -m app.mcp                  # real MCP session in-process, lists the Gmail tools
 uv run python -m app.rag                  # embedding model + Supabase + vector search
-uv run python -m app.agent                # the 5 blocks, no network
+uv run python -m app.agent                # the 6 blocks, no network
 uv run python -m app.core.llm             # provider chain
 uv run python -m app.core.db              # DB connectivity
 ```
@@ -339,7 +342,8 @@ smoke check. Preserve this when adding modules.
   fails on any shortcut.
 - OAuth tokens are **Fernet-encrypted** at rest; decrypted only to pass to the MCP
   client (which forwards to the Gmail tools).
-- The agent stays in **5 blocks + orchestrator**; keep blocks small and testable.
+- The agent stays in **6 blocks + orchestrator**; keep blocks small and testable.
+  Side effects (Gmail, memory writes) go through the `tools` block only.
 - Prompt strings live next to their users (agent blocks; `rag/learning.py` for the diff summary).
 - **Single unified `embeddings` table** with a `source_type` discriminator.
 - LLM access goes through `core.llm.chat()` / `provider_chain()`: local (Ollama) is the
