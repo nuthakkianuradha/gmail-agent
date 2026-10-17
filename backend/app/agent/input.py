@@ -16,6 +16,8 @@ USER PERSONA:
 - Style: {style_notes}
 - Signature: {signature}
 - Instructions: {custom_instructions}
+(Fields marked "(not set)" are simply unknown — never mention them in the reply
+and never write placeholder text such as "(no signature provided)".)
 
 RULES:
 {rules_text}
@@ -34,6 +36,11 @@ Body:
 
 Draft a reply following the persona, rules, and learned preferences above.
 """
+
+
+def _or_unset(value: str | None) -> str:
+    """Empty persona fields become an explicit marker the prompt tells the model to ignore."""
+    return value.strip() if value and value.strip() else "(not set)"
 
 
 def _format_rules(rules: list[dict]) -> str:
@@ -65,11 +72,11 @@ def build_input(email_data: dict, state) -> str:
     """
     persona = state.persona or {}
     return REPLY_INPUT_TEMPLATE.format(
-        display_name=persona.get("display_name", ""),
-        tone=persona.get("tone", "professional"),
-        style_notes=persona.get("style_notes", ""),
-        signature=persona.get("signature", ""),
-        custom_instructions=persona.get("custom_instructions", ""),
+        display_name=_or_unset(persona.get("display_name")),
+        tone=persona.get("tone") or "professional",
+        style_notes=_or_unset(persona.get("style_notes")),
+        signature=_or_unset(persona.get("signature")),
+        custom_instructions=_or_unset(persona.get("custom_instructions")),
         rules_text=_format_rules(state.rules),
         past_emails_text=_format_past_emails(state.past_emails),
         modifications_text=_format_modifications(state.modifications),

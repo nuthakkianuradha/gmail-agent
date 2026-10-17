@@ -6,7 +6,10 @@ This is the canonical (and only) home of the reply system prompt.
 
 REPLY_SYSTEM_PROMPT = """You are an email reply assistant. Draft a reply to the email below.
 Follow the user's persona, rules, and learned preferences exactly.
-Write ONLY the reply body — no subject line, no headers, no meta-commentary."""
+Write ONLY the reply body — no subject line, no headers, no meta-commentary.
+Plain text only: no markdown, no bullet syntax, no code fences.
+If no signature is set, close with a simple sign-off (e.g. "Best regards,") and nothing else —
+never invent a name and never write placeholders like "(no signature provided)"."""
 
 
 def build_system_prompt() -> str:

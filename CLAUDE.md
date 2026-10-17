@@ -2,7 +2,7 @@
 
 > AI email-reply assistant. Sign in with Google → browse your Primary inbox →
 > click an email → the agent drafts a reply in *your* voice using RAG over your
-> history → review/edit in a markdown editor → send. Every send teaches it more.
+> history → review/edit in a plain text box → send. Every send teaches it more.
 
 This file is the architectural source of truth. It explains **what each part is
 for, how the pieces connect, and how the agent is organized into 6 blocks with
@@ -282,7 +282,7 @@ SPA (React Router). Routes: `/login`, `/auth/callback` (captures `?token`),
 protected `/inbox`, `/email/:threadId`, `/settings`. Auth state in a Zustand store
 (`store/authStore.ts`); token in `localStorage`. API wrappers in `api/`
 (`emails.ts`, `drafts.ts`, `settings.ts`) all go through the shared axios `client`.
-Draft editing uses a markdown editor (`@uiw/react-md-editor`). The frontend calls
+Draft editing is a single plain `<textarea>` (`components/DraftEditor.tsx`) — one always-editable view, no preview modes. The frontend calls
 only the backend REST API — it has no knowledge of Gmail, MCP, or the agent.
 
 ---
