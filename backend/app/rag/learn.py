@@ -1,4 +1,4 @@
-"""RAG **learning** — how memory grows after every send.
+"""RAG stage 7 — **LEARN**. How memory grows after every send.
 
 Two things are recorded when the user sends a reply:
 
@@ -11,7 +11,7 @@ Two things are recorded when the user sends a reply:
 
 from app.core import llm
 from app.core.db import get_supabase
-from app.rag.indexing import index_email, index_modification
+from app.rag.index import index_email, index_modification
 
 DIFF_SUMMARY_PROMPT = """Compare the AI-generated draft with the user's edited version.
 Summarize what the user changed in 1-2 sentences. Focus on style, tone, and content preferences.
@@ -101,8 +101,8 @@ async def store_modification(
 
 
 if __name__ == "__main__":
-    print("RAG learning (feedback loop):")
+    print("LEARN: feedback loop after every send")
     print("  archive_sent_email(user_id, gmail_message_id, gmail_thread_id, from, to, subject, body)")
     print("  store_modification(user_id, email_id, subject, snippet, before, after)  [async]")
     print("  summarize_diff(before, after) -> str  [async, cheap model]")
-    print("RAG learning module OK")
+    print("Learn module OK")

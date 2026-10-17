@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from app.dependencies import get_current_user
 from app.core.db import get_supabase
-from app.rag.indexing import index_rule, index_persona
+from app.rag.index import index_rule, index_persona
 from app.models.persona import PersonaRequest, PersonaResponse, RuleRequest, RuleResponse
 
 router = APIRouter()

@@ -14,7 +14,7 @@ a tool. ``TOOLS`` is the human-readable registry of what the agent can do.
 from dataclasses import dataclass
 
 from app.mcp.client import GmailMCPClient
-from app.rag.learning import archive_sent_email, store_modification
+from app.rag.learn import archive_sent_email, store_modification
 
 
 @dataclass(frozen=True)
@@ -27,8 +27,8 @@ class ToolSpec:
 TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec("get_email", "Fetch one Gmail message (parsed) by id", "mcp: gmail_get_message"),
     ToolSpec("send_reply", "Send an in-thread reply via Gmail", "mcp: gmail_send_reply"),
-    ToolSpec("remember_sent_email", "Archive + index a sent email for future recall", "rag.learning.archive_sent_email"),
-    ToolSpec("remember_edit", "Record, summarize and index the user's edit of a draft", "rag.learning.store_modification"),
+    ToolSpec("remember_sent_email", "Archive + index a sent email for future recall", "rag.learn.archive_sent_email"),
+    ToolSpec("remember_edit", "Record, summarize and index the user's edit of a draft", "rag.learn.store_modification"),
 )
 
 

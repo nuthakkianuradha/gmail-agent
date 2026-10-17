@@ -91,12 +91,15 @@ gmail-agent/
 │       │   ├── client.py            # GmailMCPClient (typed handle)
 │       │   └── __main__.py          # `python -m app.mcp` smoke check
 │       │
-│       ├── rag/                 # ★ RAG — the agent's memory (see §8)
-│       │   ├── embeddings.py        # local sentence-transformers encode()
-│       │   ├── indexing.py          # WRITE: index_email/rule/persona/modification
-│       │   ├── retrieval.py         # READ: retrieve_context (pgvector) + persona/rules
-│       │   ├── learning.py          # feedback loop: archive sent + store edits (+LLM diff summary)
-│       │   └── __main__.py          # `python -m app.rag` smoke check
+│       ├── rag/                 # ★ RAG — the agent's memory, one pipeline stage per file (see §8)
+│       │   ├── load.py              # 1 LOAD      record → Document(text, metadata)
+│       │   ├── chunk.py             # 2 CHUNK     long text → overlapping pieces (1200 chars, 150 overlap)
+│       │   ├── embed.py             # 3 EMBED     text → 768-dim vector, local sentence-transformers
+│       │   ├── store.py             # 4 STORE     chunks+vectors → `embeddings` rows (delete-then-insert per source)
+│       │   ├── index.py             # 5 INDEX     glue: load→chunk→embed→store; index_email/rule/persona/modification
+│       │   ├── retrieve.py          # 6 RETRIEVE  query → embed → match_embeddings() → best chunk per source
+│       │   ├── learn.py             # 7 LEARN     feedback loop: archive sent + store edits (+LLM diff summary)
+│       │   └── __main__.py          # `python -m app.rag` walks the pipeline
 │       │
 │       ├── agent/               # ★ AGENT — 6 blocks + orchestrator (see §6)
 │       │   ├── config.py            # block: config   (AgentConfig)
@@ -112,7 +115,7 @@ gmail-agent/
 │       │   ├── auth.py          #   /auth   OAuth login/callback, /me   (core.auth)
 │       │   ├── emails.py        #   /emails inbox/message/thread        (mcp client)
 │       │   ├── drafts.py        #   /drafts generate/send               (agent)
-│       │   └── settings.py      #   /settings persona + rules CRUD      (rag.indexing)
+│       │   └── settings.py      #   /settings persona + rules CRUD      (rag.index)
 │       │
 │       └── models/              # Pydantic request/response schemas
 │   └── tests/                   # pytest, grouped by package: test_core_*, test_mcp*, test_agent*, test_architecture
@@ -164,8 +167,8 @@ POST /drafts/generate  → routers/drafts → ReplyAgent(user).generate_reply(ms
 POST /drafts/send  → ReplyAgent(user).send_reply(...)
   TOOLS tools.get_email (for Message-ID threading header)      ──MCP──▶ Gmail API
   TOOLS tools.send_reply ──MCP──▶ gmail_send_reply (in-thread reply)
-  TOOLS tools.remember_sent_email → rag.learning.archive_sent_email → emails table + embed
-  if user edited draft: TOOLS tools.remember_edit → rag.learning.store_modification()
+  TOOLS tools.remember_sent_email → rag.learn.archive_sent_email → emails table + index
+  if user edited draft: TOOLS tools.remember_edit → rag.learn.store_modification()
         → summarize_diff (LLM) → modifications table + embed the before/after
 ```
 Reading inbox/message/thread (`/emails/*`) also goes **through the MCP client** —
@@ -207,7 +210,7 @@ the prompt without touching retrieval; test output parsing with no LLM; test the
 tools block with MCP and RAG faked). To add a second agent, reuse the same 6-block shape.
 
 > Prompt strings live with their users: the reply prompts in the agent blocks
-> (`system_prompt.py`, `input.py`), the diff-summary prompt in `rag/learning.py`.
+> (`system_prompt.py`, `input.py`), the diff-summary prompt in `rag/learn.py`.
 > The agent calls the model through `core.llm.chat()`; it never builds a client.
 
 ---
@@ -258,14 +261,17 @@ ef_construction=64`). The `match_embeddings(query_embedding, query_user_id,
 filter_source_types, match_threshold, match_count)` SQL function returns rows with
 `similarity = 1 - cosine_distance`, filtered per user + source type + threshold,
 ordered by distance. The agent's `state` block calls it via
-`rag.retrieval.retrieve_context` (threshold 0.4, count 8, sources email+modification).
+`rag.retrieve.retrieve_context` (threshold 0.4, count 8, sources email+modification),
+which collapses chunk hits to the best chunk per source.
 
 **Unified embeddings design:** one table with a `source_type` discriminator (not a
 table per type). Every indexable thing — sent emails, rules, modifications,
-persona — is embedded into it via the `index_*` functions in `rag/indexing.py`,
-and kept in sync when settings change (e.g. deleting a rule deletes its
-embedding). `rag/learning.py` is the feedback loop that grows memory after every
-send (archive the sent email; store + summarize the user's edit).
+persona — goes through the same pipeline `rag/index.py` runs: **load** (record →
+`Document`) → **chunk** (≤1200 chars, 150 overlap; most sources are one chunk) →
+**embed** (local) → **store** (delete the source's old rows, insert one row per
+chunk, `metadata.chunk_index`). Deleting a rule deletes its rows. `rag/learn.py`
+is the feedback loop that grows memory after every send (archive the sent email;
+store + summarize the user's edit).
 
 ---
 
@@ -318,7 +324,7 @@ npm run dev                               # Vite dev server
 
 # Subsystem smoke checks (each package has a __main__)
 uv run python -m app.mcp                  # real MCP session in-process, lists the Gmail tools
-uv run python -m app.rag                  # embedding model + Supabase + vector search
+uv run python -m app.rag                  # walks load→chunk→embed→(store)→retrieve against the live DB
 uv run python -m app.agent                # the 6 blocks, no network
 uv run python -m app.core.llm             # provider chain
 uv run python -m app.core.db              # DB connectivity
@@ -344,7 +350,7 @@ smoke check. Preserve this when adding modules.
   client (which forwards to the Gmail tools).
 - The agent stays in **6 blocks + orchestrator**; keep blocks small and testable.
   Side effects (Gmail, memory writes) go through the `tools` block only.
-- Prompt strings live next to their users (agent blocks; `rag/learning.py` for the diff summary).
+- Prompt strings live next to their users (agent blocks; `rag/learn.py` for the diff summary).
 - **Single unified `embeddings` table** with a `source_type` discriminator.
 - LLM access goes through `core.llm.chat()` / `provider_chain()`: local (Ollama) is the
   default primary, Groq then OpenRouter are fallbacks when keys exist; cloud

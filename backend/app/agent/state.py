@@ -5,15 +5,15 @@ persistent memory: the user's persona, their active rules, and the RAG-retrieved
 neighbours (similar past emails and past edits). This is the dynamic context the
 ``input`` block renders into a prompt.
 
-The heavy lifting (vector search, DB reads) stays in :mod:`app.rag.retrieval`;
+The heavy lifting (vector search, DB reads) stays in :mod:`app.rag.retrieve`;
 this block just gathers the pieces into one immutable snapshot.
 """
 
 from dataclasses import dataclass, field
 
 from app.agent.config import AgentConfig
-from app.rag import retrieval
-from app.rag.indexing import email_to_text
+from app.rag import retrieve
+from app.rag.load import email_text
 
 
 @dataclass(frozen=True)
@@ -38,9 +38,9 @@ class AgentState:
         """Assemble the agent's state from memory for one incoming email."""
         config = config or AgentConfig.default()
 
-        context = retrieval.retrieve_context(
+        context = retrieve.retrieve_context(
             user_id,
-            email_to_text(email_data),
+            email_text(email_data),
             match_count=config.match_count,
             match_threshold=config.match_threshold,
             source_types=config.memory_source_types,
@@ -50,8 +50,8 @@ class AgentState:
         modifications = [c for c in context if c.get("source_type") == "modification"]
 
         return cls(
-            persona=retrieval.get_persona(user_id),
-            rules=retrieval.get_active_rules(user_id),
+            persona=retrieve.get_persona(user_id),
+            rules=retrieve.get_active_rules(user_id),
             past_emails=past_emails,
             modifications=modifications,
         )

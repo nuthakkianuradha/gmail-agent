@@ -69,17 +69,23 @@ critical wiring: the server's session manager is started in the FastAPI
 
 ## 2. RAG — the agent's memory (`app/rag/`)
 
-**Idea.** One Postgres table, `embeddings`, holds every indexable thing as a
-768-dim vector with a `source_type` discriminator (`email`, `rule`,
+**Idea.** One Postgres table, `embeddings`, holds every indexable thing as
+768-dim vectors with a `source_type` discriminator (`email`, `rule`,
 `modification`, `persona`). Retrieval is a cosine nearest-neighbour search over
 that table, scoped to the user. The memory grows after every send.
 
-| File | Role |
-|---|---|
-| `embeddings.py` | `encode(text)` with `all-mpnet-base-v2`, **locally** via sentence-transformers. No API, no cost. |
-| `indexing.py` | **Write side.** `index_email`, `index_rule`, `index_persona`, `index_modification`: text → vector → upsert. |
-| `retrieval.py` | **Read side.** `retrieve_context` calls the `match_embeddings` SQL function (pgvector, HNSW cosine index). Plus `get_persona`, `get_active_rules`. |
-| `learning.py` | **Feedback loop.** After a send: `archive_sent_email` (store + index the outbound mail) and `store_modification` (store the user's edit with a cheap-LLM "what changed?" summary, then index it). |
+The package is written as the classic pipeline, **one stage per file, read in
+order**:
+
+| # | Stage | File | What it does |
+|---|---|---|---|
+| 1 | **Load** | `load.py` | A DB record → `Document(source_type, source_id, text, metadata)`. One loader per source type. The only place that knows the records' shape. |
+| 2 | **Chunk** | `chunk.py` | Long text → overlapping pieces (≤1200 chars, 150 overlap) that fit the embedding model. Rules, personas and most emails are a single chunk. |
+| 3 | **Embed** | `embed.py` | Text → normalized 768-dim vector with `all-mpnet-base-v2`, **locally**. No API, no cost. |
+| 4 | **Store** | `store.py` | Chunks + vectors → rows in `embeddings`. Delete-then-insert per source, so re-indexing never leaves stale rows. |
+| 5 | **Index** | `index.py` | The glue: `index(user_id, doc)` = load → chunk → embed → store. `index_email`, `index_rule`, `index_persona`, `index_modification` are what the app calls. |
+| 6 | **Retrieve** | `retrieve.py` | Query text → embed → `match_embeddings()` (pgvector, HNSW cosine) → best chunk per source. Plus `get_persona`, `get_active_rules`. |
+| 7 | **Learn** | `learn.py` | After a send: `archive_sent_email` (store + index the outbound mail) and `store_modification` (store the user's edit with a cheap-LLM "what changed?" summary, then index it). |
 
 **What you need.**
 
@@ -94,13 +100,15 @@ that table, scoped to the user. The memory grows after every send.
 
 ```bash
 cd backend
-uv run python -m app.rag.embeddings   # downloads/loads the model, prints 768 dims
-uv run python -m app.rag              # model + Supabase reachability + a vector search
+uv run python -m app.rag.chunk        # pure: shows a long email splitting into chunks
+uv run python -m app.rag.embed        # downloads/loads the model, prints 768 dims
+uv run python -m app.rag              # walks load → chunk → embed → (store) → retrieve against the live DB
+uv run pytest -q tests/test_rag.py    # load, chunk, index (embed/store faked), retrieve dedupe
 ```
 
-**Teach from.** `indexing.py` next to `retrieval.py` (write vs read of the same
-table), then `learning.py` (why every send makes the next draft better). The SQL
-function and index live in `002_full_schema.sql`.
+**Teach from.** Run the stages' `__main__` in order 1 → 7, then open
+`index.py` to see them composed, then `retrieve.py` for the read side and the
+SQL in `002_full_schema.sql` for the index and the search function.
 
 ---
 
@@ -224,6 +232,7 @@ cd backend && uv run pytest -q
 | `test_architecture.py` | The package boundaries above. Fails on any cross-subsystem shortcut. |
 | `test_mcp.py`, `test_mcp_email_parser.py` | Real MCP round-trip in-process (SDK faked); MIME parsing. |
 | `test_agent.py`, `test_agent_prompts.py` | The blocks and their prompts, no network; the tools block with MCP/RAG faked. |
+| `test_rag.py` | The pipeline stages with the model and DB faked. |
 | `test_core_llm.py`, `test_core_auth.py`, `test_core_crypto.py` | Provider chain order and fallthrough; JWT; Fernet. |
 | `test_models.py` | Pydantic schemas. |
 
@@ -236,7 +245,7 @@ cd backend && uv run pytest -q
 | `GET` | `/auth/login`, `/auth/callback`, `/auth/me` | `core.auth` |
 | `GET` | `/emails/inbox`, `/emails/{id}`, `/emails/thread/{id}` | `mcp` client |
 | `POST` | `/drafts/generate`, `/drafts/send` | `agent` |
-| `GET/PUT` | `/settings/persona` · `GET/POST/DELETE` `/settings/rules` | `rag.indexing` |
+| `GET/PUT` | `/settings/persona` · `GET/POST/DELETE` `/settings/rules` | `rag.index` |
 | `GET` | `/health` | lists the MCP tools |
 | `*` | `/mcp-server` | the Gmail MCP server, for external MCP clients |
 
